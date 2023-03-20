@@ -1,7 +1,6 @@
 package tuntap
 
 import (
-	"fmt"
 	"net"
 	"os"
 	"unsafe"
@@ -167,7 +166,6 @@ func (v *VirtIf) SetIPv4(ip net.IP) error {
 	var addr_in iflagsaddr
 	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if e != nil {
-		fmt.Println("1")
 		return e
 	}
 	defer unix.Close(s)
@@ -178,7 +176,6 @@ func (v *VirtIf) SetIPv4(ip net.IP) error {
 	copy(addr_in.Zero[:], []uint8{0, 0, 0, 0, 0, 0, 0, 0})
 	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFADDR, uintptr(unsafe.Pointer(&addr_in)))
 	if ep != 0 {
-		fmt.Println("3")
 		return unix.Errno(ep)
 	}
 	return nil
