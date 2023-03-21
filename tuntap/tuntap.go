@@ -1,6 +1,7 @@
 package tuntap
 
 import (
+	"io"
 	"net"
 	"os"
 	"unsafe"
@@ -8,15 +9,51 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type iflags struct {
-	name  [unix.IFNAMSIZ]byte
-	flags uint16
+const (
+	nameSize     = unix.IFNAMSIZ
+	sockaddrSize = unsafe.Sizeof(unix.RawSockaddrInet4{})
+	ipSize       = 4
+)
+
+type ifreq [40]byte
+
+func (f *ifreq) SetName(name string) int {
+	return copy(f[:nameSize], name)
 }
 
-type iflagsaddr struct {
-	name [unix.IFNAMSIZ]byte
-	unix.RawSockaddrInet4
+func (f *ifreq) SetSockaddr(family, port uint16, addr net.IP) error {
+	fam := uint16ToBytes(family)
+	p := uint16ToBytes(port)
+
+	copy(f[nameSize:], fam[:])
+	copy(f[nameSize+2:], p[:])
+	copy(f[nameSize+4:], addr.To4())
+	copy(f[nameSize+8:], []uint8{0, 0, 0, 0, 0, 0, 0, 0})
+
+	return nil
 }
+
+func (f *ifreq) SetFlag(flag IfFlag) {
+	fl := uint16ToBytes(uint16(flag))
+
+	f[nameSize] |= fl[0]
+	f[nameSize+1] |= fl[1]
+}
+
+func (f *ifreq) UnsetFlag(flag IfFlag) {
+	fl := uint16ToBytes(uint16(flag))
+
+	f[nameSize] &= ^fl[0]
+	f[nameSize+1] &= ^fl[1]
+}
+
+func uint16ToBytes(n uint16) [2]byte {
+	return [2]byte{byte(n & 0b0000000011111111), byte(n >> 8)}
+}
+
+/*func bytesToUint16(n [2]byte) uint16 {
+	return (uint16(n[1]) << 8) | uint16(n[0])
+}*/
 
 // Struct object that represents the TUN/TAP Virtual Interface
 type VirtIf struct {
@@ -85,7 +122,7 @@ func (b IfBuilder) SetName(name string) IfBuilder {
 }
 
 // Build returns the Virtual Interface with the specified flags and options.
-func (b IfBuilder) Build() (*VirtIf, error) {
+func (b IfBuilder) Build() (IfInterface, error) {
 	fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
@@ -121,18 +158,18 @@ func (b IfBuilder) Build() (*VirtIf, error) {
 
 // Set Virtual Interface Up
 func (v *VirtIf) Up() error {
-	var ifl iflags
+	var ifl ifreq
 	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if e != nil {
 		return e
 	}
 	defer unix.Close(s)
-	copy(ifl.name[:], v.name)
+	ifl.SetName(v.name)
 	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&ifl)))
 	if ep != 0 {
 		return unix.Errno(ep)
 	}
-	ifl.flags |= uint16(IFF_UP)
+	ifl.SetFlag(IFF_UP)
 	_, _, ep = unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifl)))
 	if ep != 0 {
 		return unix.Errno(ep)
@@ -142,18 +179,18 @@ func (v *VirtIf) Up() error {
 
 // Set Virtual Interface Down
 func (v *VirtIf) Down() error {
-	var ifl iflags
+	var ifl ifreq
 	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if e != nil {
 		return e
 	}
 	defer unix.Close(s)
-	copy(ifl.name[:], v.name)
+	ifl.SetName(v.name)
 	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&ifl)))
 	if ep != 0 {
 		return unix.Errno(ep)
 	}
-	ifl.flags &= ^uint16(IFF_UP)
+	ifl.UnsetFlag(IFF_UP)
 	_, _, ep = unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifl)))
 	if ep != 0 {
 		return unix.Errno(ep)
@@ -162,19 +199,21 @@ func (v *VirtIf) Down() error {
 }
 
 // Set Virtual Interface IPv4 address
-func (v *VirtIf) SetIPv4(ip net.IP) error {
-	var addr_in iflagsaddr
+func (v *VirtIf) SetIPv4(ip net.IP, mask net.IP) error {
+	var addr_in ifreq
 	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if e != nil {
 		return e
 	}
 	defer unix.Close(s)
-	copy(addr_in.name[:], v.name)
-	addr_in.Family = unix.AF_INET
-	copy(addr_in.Addr[:], ip.To4())
-	addr_in.Port = 0
-	copy(addr_in.Zero[:], []uint8{0, 0, 0, 0, 0, 0, 0, 0})
+	addr_in.SetName(v.name)
+	addr_in.SetSockaddr(unix.AF_INET, 0, ip)
 	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFADDR, uintptr(unsafe.Pointer(&addr_in)))
+	if ep != 0 {
+		return unix.Errno(ep)
+	}
+	addr_in.SetSockaddr(unix.AF_INET, 0, mask)
+	_, _, ep = unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFNETMASK, uintptr(unsafe.Pointer(&addr_in)))
 	if ep != 0 {
 		return unix.Errno(ep)
 	}
@@ -223,4 +262,11 @@ func (c ConfingInvalid) toString() string {
 
 func (c ConfingInvalid) Error() string {
 	return c.toString()
+}
+
+type IfInterface interface {
+	io.ReadWriteCloser
+	SetIPv4(net.IP, net.IP) error
+	Up() error
+	Down() error
 }

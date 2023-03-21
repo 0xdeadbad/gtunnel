@@ -13,7 +13,7 @@ func TestTunTap(t *testing.T) {
 		t.Error(err)
 	}
 
-	err = ifc.SetIPv4(net.IPv4(10, 0, 0, 123))
+	err = ifc.SetIPv4(net.IPv4(10, 0, 0, 123), net.IPv4(255, 255, 255, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
