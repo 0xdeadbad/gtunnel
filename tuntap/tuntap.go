@@ -47,8 +47,17 @@ func (f *ifreq) UnsetFlag(flag IfFlag) {
 	f[nameSize+1] &= ^fl[1]
 }
 
+func (f *ifreq) SetMTU(mtu int32) {
+	m := uint32ToBytes(mtu)
+	copy(f[nameSize:], m[:])
+}
+
 func uint16ToBytes(n uint16) [2]byte {
 	return [2]byte{byte(n & 0b0000000011111111), byte(n >> 8)}
+}
+
+func uint32ToBytes(n int32) [4]byte {
+	return [4]byte{byte(n & 0b00000000000000000000000011111111), byte((n & 0b00000000000000001111111100000000) >> 8), byte((n & 0b00000000111111110000000000000000) >> 16), byte(n >> 24)}
 }
 
 /*func bytesToUint16(n [2]byte) uint16 {
@@ -61,6 +70,7 @@ type VirtIf struct {
 	name  string
 	flags uint16
 	ifreq *unix.Ifreq
+	io.ReadWriteCloser
 }
 
 // VirtIf builder. Can chain options and settings to configure the new VirtIf
@@ -220,6 +230,26 @@ func (v *VirtIf) SetIPv4(ip net.IP, mask net.IP) error {
 	return nil
 }
 
+func (v *VirtIf) SetMTU(mtu int32) error {
+	var ifl ifreq
+	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if e != nil {
+		return e
+	}
+	defer unix.Close(s)
+	ifl.SetName(v.name)
+	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCGIFMTU, uintptr(unsafe.Pointer(&ifl)))
+	if ep != 0 {
+		return unix.Errno(ep)
+	}
+	ifl.SetMTU(mtu)
+	_, _, ep = unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFMTU, uintptr(unsafe.Pointer(&ifl)))
+	if ep != 0 {
+		return unix.Errno(ep)
+	}
+	return nil
+}
+
 func (v *VirtIf) Write(b []byte) (int, error) {
 	return unix.Write(v.fd, b)
 }
@@ -267,6 +297,7 @@ func (c ConfingInvalid) Error() string {
 type IfInterface interface {
 	io.ReadWriteCloser
 	SetIPv4(net.IP, net.IP) error
+	SetMTU(mtu int32) error
 	Up() error
 	Down() error
 }
