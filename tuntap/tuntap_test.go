@@ -41,6 +41,18 @@ func TestTunTap(t *testing.T) {
 
 	<-time.After(10 * time.Second)
 
+	hw, err := net.ParseMAC("18:c0:4d:64:51:7f")
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = ifc.SetHWAddr(hw)
+	if err != nil {
+		t.Error(err)
+	}
+
+	<-time.After(5 * time.Second)
+
 	err = ifc.Down()
 	if err != nil {
 		t.Error(err)
@@ -48,7 +60,7 @@ func TestTunTap(t *testing.T) {
 
 	t.Log("Down")
 
-	<-time.After(10 * time.Second)
+	<-time.After(5 * time.Second)
 
 	log.Println(buffer)
 

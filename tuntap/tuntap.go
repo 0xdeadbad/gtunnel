@@ -33,6 +33,15 @@ func (f *ifreq) SetSockaddr(family, port uint16, addr net.IP) error {
 	return nil
 }
 
+func (f *ifreq) SetHWAddr(mac net.HardwareAddr) error {
+	fam := uint16ToBytes(unix.ARPHRD_ETHER)
+
+	copy(f[nameSize:], fam[:])
+	copy(f[nameSize+2:], mac[:])
+
+	return nil
+}
+
 func (f *ifreq) SetFlag(flag IfFlag) {
 	fl := uint16ToBytes(uint16(flag))
 
@@ -250,6 +259,23 @@ func (v *VirtIf) SetMTU(mtu int32) error {
 	return nil
 }
 
+// Set Virtual Interface MAC address
+func (v *VirtIf) SetHWAddr(mac net.HardwareAddr) error {
+	var hw_addr ifreq
+	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if e != nil {
+		return e
+	}
+	defer unix.Close(s)
+	hw_addr.SetName(v.name)
+	hw_addr.SetHWAddr(mac)
+	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFHWADDR, uintptr(unsafe.Pointer(&hw_addr)))
+	if ep != 0 {
+		return unix.Errno(ep)
+	}
+	return nil
+}
+
 func (v *VirtIf) Write(b []byte) (int, error) {
 	return unix.Write(v.fd, b)
 }
@@ -298,6 +324,7 @@ type IfInterface interface {
 	io.ReadWriteCloser
 	SetIPv4(net.IP, net.IP) error
 	SetMTU(mtu int32) error
+	SetHWAddr(mac net.HardwareAddr) error
 	Up() error
 	Down() error
 }
