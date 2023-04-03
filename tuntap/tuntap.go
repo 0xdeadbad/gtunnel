@@ -23,7 +23,7 @@ func (f *ifreq) SetName(name string) int {
 
 func (f *ifreq) SetSockaddr(family, port uint16, addr net.IP) error {
 	fam := uint16ToBytes(family)
-	p := uint16ToBytes(port)
+	p := uint16ToBytes(0)
 
 	copy(f[nameSize:], fam[:])
 	copy(f[nameSize+2:], p[:])
@@ -131,12 +131,14 @@ func (b IfBuilder) SetNoPktInfo() IfBuilder {
 // Set manually a flag
 func (b IfBuilder) SetFlag(f IfFlag) IfBuilder {
 	b.flags |= f
+
 	return b
 }
 
 // Set the Virtual Interface name
 func (b IfBuilder) SetName(name string) IfBuilder {
 	b.name = name
+
 	return b
 }
 
@@ -262,13 +264,16 @@ func (v *VirtIf) SetMTU(mtu int32) error {
 // Set Virtual Interface MAC address
 func (v *VirtIf) SetHWAddr(mac net.HardwareAddr) error {
 	var hw_addr ifreq
-	s, e := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if e != nil {
-		return e
+	s, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
 	}
 	defer unix.Close(s)
 	hw_addr.SetName(v.name)
-	hw_addr.SetHWAddr(mac)
+	err = hw_addr.SetHWAddr(mac)
+	if err != nil {
+		return err
+	}
 	_, _, ep := unix.Syscall(unix.SYS_IOCTL, uintptr(s), unix.SIOCSIFHWADDR, uintptr(unsafe.Pointer(&hw_addr)))
 	if ep != 0 {
 		return unix.Errno(ep)
